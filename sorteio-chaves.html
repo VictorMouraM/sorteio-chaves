@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sorteio dos Personagens</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#fff6dc;--card:#ffffff;--ink:#2b2118;--muted:#7a6a58;--accent:#e8590c;--accent-ink:#ffffff;--line:#f0dfb4;--ok:#2f9e44}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1d1812;--card:#2a231a;--ink:#f6ead2;--muted:#b8a78c;--accent:#ff8a3d;--accent-ink:#1d1812;--line:#43392a;--ok:#69db7c}}
+:root[data-theme="dark"]{--bg:#1d1812;--card:#2a231a;--ink:#f6ead2;--muted:#b8a78c;--accent:#ff8a3d;--accent-ink:#1d1812;--line:#43392a;--ok:#69db7c}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:"Trebuchet MS",system-ui,-apple-system,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{width:100%;max-width:420px;background:var(--card);border:2px solid var(--line);border-radius:20px;padding:28px 22px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.emoji{font-size:48px;line-height:1}
+h1{font-size:24px;margin:10px 0 6px}
+p{color:var(--muted);margin:0 0 18px;line-height:1.45}
+select,button{width:100%;font:inherit;font-size:17px;border-radius:12px;padding:14px;border:2px solid var(--line);background:var(--bg);color:var(--ink)}
+button{margin-top:12px;background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+.result{font-size:34px;font-weight:800;color:var(--accent);margin:14px 0 6px;min-height:44px;word-break:break-word}
+.hint{font-size:14px;color:var(--ok);font-weight:700}
+.warn{font-size:13px;color:var(--muted);margin-top:16px}
+input{width:100%;font:inherit;font-size:22px;letter-spacing:.4em;text-align:center;border-radius:12px;padding:12px;border:2px solid var(--line);background:var(--bg);color:var(--ink);margin-top:10px}
+.err{color:#e03131;font-size:14px;min-height:20px;margin-top:8px;font-weight:700}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="emoji" id="emoji">🎲</div>
+  <h1 id="title">Sorteio dos personagens</h1>
+
+  <section id="pick">
+    <p>Escolha o seu nome e descubra qual personagem da Vila você vai ser. Só você vê o resultado!</p>
+    <select id="who" aria-label="Seu nome"><option value="">Selecione seu nome…</option></select>
+    <button id="go" disabled>Sortear meu personagem</button>
+  </section>
+
+  <section id="pinbox" class="hidden">
+    <p id="pinmsg"></p>
+    <input id="pin1" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" autocomplete="off" placeholder="••••" aria-label="Senha de 4 dígitos">
+    <input id="pin2" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" autocomplete="off" placeholder="••••" aria-label="Confirme a senha" class="hidden">
+    <div class="err" id="err"></div>
+    <button id="ok">Continuar</button>
+    <button id="cancel" style="background:transparent;color:var(--ink);border-color:var(--line)">Voltar</button>
+  </section>
+
+  <section id="reveal" class="hidden">
+    <p id="hello"></p>
+    <div class="result" id="res">…</div>
+    <div class="hint hidden" id="done">Esse é o seu personagem. Guarde segredo! 🤫</div>
+      </section>
+</main>
+
+<script>
+// Sorteio fixo: cada pessoa recebe exatamente um personagem, sem repetição.
+var PEOPLE = ["Victor","Luan","Mayara","Giovana","Amanda","Italo","Eduardo"];
+var CHARS  = ["Chaves","Chiquinha","Quico","Seu Madruga","Dona Florinda","Bruxa do 71","Prof. Linguiça"];
+// índice do personagem de cada pessoa (mesma ordem de PEOPLE)
+var PERM   = [3,6,0,4,2,5,1];
+
+var $=function(id){return document.getElementById(id)};
+var who=$('who'),go=$('go'),pick=$('pick'),pinbox=$('pinbox'),reveal=$('reveal'),res=$('res'),hello=$('hello'),done=$('done'),emoji=$('emoji');
+var pin1=$('pin1'),pin2=$('pin2'),err=$('err'),pinmsg=$('pinmsg'),ok=$('ok');
+
+PEOPLE.forEach(function(n,i){var o=document.createElement('option');o.value=i;o.textContent=n;who.appendChild(o);});
+
+function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v);}catch(e){return null;}}
+function hash(txt){
+  var data=new TextEncoder().encode('chaves-sorteio:'+txt);
+  if(window.crypto&&crypto.subtle){return crypto.subtle.digest('SHA-256',data).then(function(b){return Array.from(new Uint8Array(b)).map(function(x){return x.toString(16).padStart(2,'0')}).join('')});}
+  var h=5381;for(var j=0;j<txt.length;j++)h=((h<<5)+h+txt.charCodeAt(j))|0;return Promise.resolve(String(h));
+}
+var cur=null,saved=null,fails=0,pending=false;
+
+who.addEventListener('change',function(){go.disabled=who.value===''});
+go.addEventListener('click',function(){
+  cur=+who.value; saved=store('sorteio_pin_'+cur); fails=0; err.textContent='';
+  pin1.value='';pin2.value='';
+  if(saved){pinmsg.textContent='Olá, '+PEOPLE[cur]+'! Digite a sua senha de 4 dígitos.';pin2.classList.add('hidden');ok.textContent='Ver meu personagem';}
+  else{pinmsg.textContent='Olá, '+PEOPLE[cur]+'! Crie uma senha de 4 dígitos. Ela protege o seu personagem.';pin2.classList.remove('hidden');ok.textContent='Criar senha e sortear';}
+  pick.classList.add('hidden');pinbox.classList.remove('hidden');pin1.focus();
+});
+$('cancel').addEventListener('click',function(){pinbox.classList.add('hidden');pick.classList.remove('hidden')});
+[pin1,pin2].forEach(function(el){el.addEventListener('input',function(){el.value=el.value.replace(/\D/g,'').slice(0,4)});});
+ok.addEventListener('click',function(){
+  if(pending)return;
+  var a=pin1.value;
+  if(!/^\d{4}$/.test(a)){err.textContent='A senha precisa ter exatamente 4 números.';return;}
+  pending=true;
+  if(!saved){
+    if(a!==pin2.value){err.textContent='As duas senhas não são iguais.';pending=false;return;}
+    hash(cur+':'+a).then(function(h){store('sorteio_pin_'+cur,h);pending=false;show(cur,true)});
+  }else{
+    hash(cur+':'+a).then(function(h){
+      pending=false;
+      if(h===saved){show(cur,false)}
+      else{fails++;err.textContent=fails>=5?'Muitas tentativas. Recarregue a página.':'Senha incorreta.';if(fails>=5)ok.disabled=true;}
+    });
+  }
+});
+
+function show(i,animate){
+  pinbox.classList.add('hidden');reveal.classList.remove('hidden');
+  hello.textContent='Olá, '+PEOPLE[i]+'! Você é…';
+  var final=CHARS[PERM[i]];
+  if(!animate){res.textContent=final;emoji.textContent='🎉';done.classList.remove('hidden');return;}
+  var n=0,t=setInterval(function(){
+    res.textContent=CHARS[Math.floor(Math.random()*CHARS.length)];
+    if(++n>22){clearInterval(t);res.textContent=final;emoji.textContent='🎉';done.classList.remove('hidden');}
+  },90);
+}
+</script>
+</body>
+</html>
